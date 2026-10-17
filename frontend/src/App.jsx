@@ -1,6 +1,6 @@
 import { useState } from "react";
-
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+import ProjectFiles from "./ProjectFiles.jsx";
+import { API_BASE_URL } from "./api.js";
 
 const EXAMPLES = [
   {
@@ -122,19 +122,11 @@ function ResultsPanel({ result, loading, error }) {
         <>
           <ProjectSummary project={result.project} />
           <div className="file-output">
-            <div className="file-output-heading">
-              <span>GENERATED FILES</span>
-              <span className="file-count">{result.generated_files.length}</span>
-            </div>
-            {result.generated_files.length > 0 ? (
-              <ul className="file-list">
-                {result.generated_files.map((file) => (
-                  <li key={file}><span className="file-icon" aria-hidden="true">⌁</span><code>{file}</code></li>
-                ))}
-              </ul>
-            ) : (
-              <p className="no-files">The plan completed without generated files.</p>
-            )}
+            <ProjectFiles
+              key={result.job_id}
+              jobId={result.job_id}
+              fallbackFiles={result.generated_files}
+            />
             <div className="job-id"><span>JOB ID</span><code>{result.job_id}</code></div>
           </div>
         </>
