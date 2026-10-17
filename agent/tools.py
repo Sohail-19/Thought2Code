@@ -1,15 +1,35 @@
 import pathlib
 import subprocess
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Tuple
 
+from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 
 PROJECT_ROOT = pathlib.Path.cwd() / "generated_project"
+_PROJECT_ROOT = ContextVar("thought2code_project_root", default=None)
+
+
+def current_project_root() -> pathlib.Path:
+    """Return the request-scoped root, or the historical CLI root."""
+    return _PROJECT_ROOT.get() or PROJECT_ROOT
+
+
+@contextmanager
+def use_project_root(path: pathlib.Path):
+    """Temporarily direct file tools to an isolated project directory."""
+    token = _PROJECT_ROOT.set(pathlib.Path(path).resolve())
+    try:
+        yield
+    finally:
+        _PROJECT_ROOT.reset(token)
 
 
 def safe_path_for_project(path: str) -> pathlib.Path:
-    p = (PROJECT_ROOT / path).resolve()
-    if PROJECT_ROOT.resolve() not in p.parents and PROJECT_ROOT.resolve() != p.parent and PROJECT_ROOT.resolve() != p:
+    project_root = current_project_root().resolve()
+    p = (project_root / path).resolve()
+    if project_root not in p.parents and project_root != p:
         raise ValueError("Attempt to write outside project root")
     return p
 
@@ -37,16 +57,21 @@ def read_file(path: str) -> str:
 @tool
 def get_current_directory() -> str:
     """Returns the current working directory."""
-    return str(PROJECT_ROOT)
+    return str(current_project_root())
 
 
-@tool
-def list_files(directory: str = ".") -> str:
+class ListGeneratedFilesInput(BaseModel):
+    directory: str = Field(default=".")
+
+
+@tool(args_schema=ListGeneratedFilesInput)
+def list_generated_files(directory: str = ".") -> str:
     """Lists all files in the specified directory within the project root."""
     p = safe_path_for_project(directory)
     if not p.is_dir():
         return f"ERROR: {p} is not a directory"
-    files = [str(f.relative_to(PROJECT_ROOT)) for f in p.glob("**/*") if f.is_file()]
+    project_root = current_project_root()
+    files = [str(f.relative_to(project_root)) for f in p.glob("**/*") if f.is_file()]
     return "\n".join(files) if files else "No files found."
 
 @tool
@@ -58,5 +83,6 @@ def run_cmd(cmd: str, cwd: str = None, timeout: int = 30) -> Tuple[int, str, str
 
 
 def init_project_root():
-    PROJECT_ROOT.mkdir(parents=True, exist_ok=True)
-    return str(PROJECT_ROOT)
+    project_root = current_project_root()
+    project_root.mkdir(parents=True, exist_ok=True)
+    return str(project_root)

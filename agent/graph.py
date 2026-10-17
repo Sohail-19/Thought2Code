@@ -1,6 +1,7 @@
 
+from functools import wraps
+
 from dotenv import load_dotenv
-from langchain_core.globals import set_verbose, set_debug
 from langchain_groq.chat_models import ChatGroq
 from langgraph.constants import END
 from langgraph.graph import StateGraph
@@ -12,15 +13,25 @@ from agent.tools import (
     write_file,
     read_file,
     get_current_directory,
-    list_files,
+    list_generated_files,
 )
 
 _ = load_dotenv()
 
-set_debug(True)
-set_verbose(True)
-
 llm = ChatGroq(model="openai/gpt-oss-120b")
+
+
+def _with_node_diagnostics(node_name: str, node):
+    """Annotate node failures so the API traceback identifies the failing stage."""
+    @wraps(node)
+    def run(state):
+        try:
+            return node(state)
+        except Exception as error:
+            error.add_note(f"LangGraph node: {node_name}")
+            raise
+
+    return run
 
 
 def planner_agent(state: dict) -> dict:
@@ -90,7 +101,7 @@ def coder_agent(state: dict) -> dict:
     coder_tools = [
         read_file,
         write_file,
-        list_files,
+        list_generated_files,
         get_current_directory,
     ]
 
@@ -132,11 +143,11 @@ def coder_agent(state: dict) -> dict:
     return {"coder_state": coder_state}
 
 
-graph = StateGraph(dict)
+graph = StateGraph(AgentState)
 
-graph.add_node("planner", planner_agent)
-graph.add_node("architect", architect_agent)
-graph.add_node("coder", coder_agent)
+graph.add_node("planner", _with_node_diagnostics("planner", planner_agent))
+graph.add_node("architect", _with_node_diagnostics("architect", architect_agent))
+graph.add_node("coder", _with_node_diagnostics("coder", coder_agent))
 
 graph.add_edge("planner", "architect")
 graph.add_edge("architect", "coder")
@@ -169,4 +180,4 @@ if __name__ == "__main__":
 
     print("Project generation finished.")
     print("Final State:", result)
-    
+

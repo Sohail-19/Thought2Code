@@ -33,7 +33,8 @@ def coder_system_prompt() -> str:
     CODER_SYSTEM_PROMPT = """
 You are the CODER agent.
 You are implementing a specific engineering task.
-You have access to tools to read and write files.
+You have access to these tools: read_file(path), write_file(path, content), list_generated_files(directory), and get_current_directory().
+Use these exact tool names. To list the generated project files, call list_generated_files with {"directory": "."}; do not call a generic tool named "list".
 
 Rules:
 - Review relevant existing files before making changes.
