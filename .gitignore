@@ -28,3 +28,9 @@ generated_project/
 
 # Temporary tool tests
 test_tool_call.py
+
+# Frontend dependencies and local build output
+node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
