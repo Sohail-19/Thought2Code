@@ -24,7 +24,7 @@ def make_completed_job(monkeypatch, tmp_path, files):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
     marker_root = jobs_root / ".completed"
-    marker_root.mkdir(exist_ok=True)
+    marker_root.mkdir()
     (marker_root / f"{job_id}.done").touch()
     monkeypatch.setattr(api_main, "PROJECTS_ROOT", jobs_root)
     return job_id, job_root
@@ -116,6 +116,38 @@ def test_generation_failure_logs_only_allowlisted_metadata_and_returns_safe_erro
     assert "traceback" not in caplog.text.lower()
 
 
+def test_groq_rate_limit_returns_safe_429_without_provider_details(
+    monkeypatch, tmp_path, caplog
+):
+    monkeypatch.setattr(api_main, "PROJECTS_ROOT", tmp_path / "jobs")
+    provider_details = "org=org_private key=gsk_private_key raw provider traceback"
+    request = Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    provider_response = Response(status_code=429, request=request)
+
+    def rate_limited_invoke(state, config):
+        raise RateLimitError(
+            provider_details,
+            response=provider_response,
+            body={"error": {"message": provider_details}},
+        )
+
+    monkeypatch.setattr(api_main.agent, "invoke", rate_limited_invoke)
+    caplog.set_level(logging.ERROR, logger="api.main")
+
+    response = client.post(
+        "/generate",
+        json={"project_description": "Build a personal to-do application"},
+    )
+
+    assert response.status_code == 429
+    assert response.json() == {"detail": api_main.RATE_LIMIT_DETAIL}
+    assert provider_details not in response.text
+    assert "org_private" not in response.text
+    assert "gsk_private_key" not in response.text
+    assert "traceback" not in response.text.lower()
+    assert provider_details not in caplog.text
+
+
 def test_generation_failure_log_includes_graph_node_without_prompt(
     monkeypatch, tmp_path, caplog
 ):
@@ -191,7 +223,9 @@ def test_missing_graph_plan_is_reported_as_failure_with_safe_state_diagnostics(
 
 
 def test_completed_job_file_reading_is_isolated(monkeypatch, tmp_path):
-    first_id, _ = make_completed_job(monkeypatch, tmp_path, {"index.html": "<h1>first job</h1>"})
+    first_id, _ = make_completed_job(
+        monkeypatch, tmp_path, {"index.html": "<h1>first job</h1>"}
+    )
     jobs_root = api_main.PROJECTS_ROOT
     second_id = uuid4().hex
     second_root = jobs_root / second_id
@@ -201,7 +235,9 @@ def test_completed_job_file_reading_is_isolated(monkeypatch, tmp_path):
 
     listing = client.get(f"/jobs/{first_id}/files")
     content = client.get(f"/jobs/{first_id}/files/index.html")
-    cross_job_path = client.get(f"/jobs/{first_id}/files/%2E%2E%2F{second_id}%2Findex.html")
+    cross_job_path = client.get(
+        f"/jobs/{first_id}/files/%2E%2E%2F{second_id}%2Findex.html"
+    )
 
     assert listing.status_code == 200
     assert listing.json()["job_id"] == first_id
@@ -223,7 +259,9 @@ def test_file_endpoint_rejects_traversal_and_absolute_paths(monkeypatch, tmp_pat
         else:
             raise AssertionError(f"Unsafe path was accepted: {requested}")
 
-    traversal_request = client.get(f"/jobs/{job_id}/files/%2E%2E%2Foutside.txt")
+    traversal_request = client.get(
+        f"/jobs/{job_id}/files/%2E%2E%2Foutside.txt"
+    )
     assert traversal_request.status_code == 400
 
 
@@ -254,7 +292,8 @@ def test_file_endpoint_rejects_symlink_escape(monkeypatch, tmp_path):
     outside = tmp_path / "outside.txt"
     outside.write_text("outside job")
     job_id, job_root = make_completed_job(monkeypatch, tmp_path, {})
-    (job_root / "escape.txt").symlink_to(outside)
+    link = job_root / "escape.txt"
+    link.symlink_to(outside)
 
     response = client.get(f"/jobs/{job_id}/files/escape.txt")
 
@@ -295,35 +334,3 @@ def test_file_endpoint_rejects_non_utf8_text(monkeypatch, tmp_path):
 
     assert response.status_code == 400
     assert str(tmp_path) not in response.text
-
-
-def test_groq_rate_limit_returns_safe_429_without_provider_details(
-    monkeypatch, tmp_path, caplog
-):
-    monkeypatch.setattr(api_main, "PROJECTS_ROOT", tmp_path / "jobs")
-    caplog.set_level(logging.ERROR, logger="api.main")
-    provider_details = "org=org_private key=gsk_private_key raw provider traceback"
-    request = Request("POST", "https://api.groq.com/openai/v1/chat/completions")
-    provider_response = Response(status_code=429, request=request)
-
-    def rate_limited_invoke(state, config):
-        raise RateLimitError(
-            provider_details,
-            response=provider_response,
-            body={"error": {"message": provider_details}},
-        )
-
-    monkeypatch.setattr(api_main.agent, "invoke", rate_limited_invoke)
-
-    response = client.post(
-        "/generate",
-        json={"project_description": "Build a personal to-do application"},
-    )
-
-    assert response.status_code == 429
-    assert response.json() == {"detail": api_main.RATE_LIMIT_DETAIL}
-    assert provider_details not in response.text
-    assert "org_private" not in response.text
-    assert "gsk_private_key" not in response.text
-    assert "traceback" not in response.text.lower()
-    assert provider_details not in caplog.text
