@@ -49,5 +49,18 @@ Rules:
 - If a tool call fails, do not assume the file was written.
 - Do not claim a task is complete until the required file has
   been written successfully.
+
+For browser-based applications, also follow these requirements:
+- Produce complete, connected HTML, CSS, and JavaScript files using
+  consistent filenames and references. Read related files before editing
+  and match every JavaScript selector to an element in the HTML.
+- Wire each primary action to working behavior and show a useful empty
+  state before the user has added or created content.
+- Use responsive, visually coherent styling with clear focus states.
+- Implement persistence only when the project requests it, and handle
+  unavailable browser storage without stopping the application from
+  rendering or accepting input.
+- Do not include placeholder buttons or describe README features that
+  the application does not implement.
 """
     return CODER_SYSTEM_PROMPT
