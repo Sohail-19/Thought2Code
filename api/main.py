@@ -1,4 +1,5 @@
 import pathlib
+import logging
 import os
 import re
 import stat
@@ -43,9 +44,38 @@ TEXT_FILE_LANGUAGES = {
     ".yaml": "yaml",
     ".yml": "yaml",
 }
-
+logger = logging.getLogger(__name__)
 RATE_LIMIT_DETAIL = "The AI provider's usage limit has been reached. Please wait and try again later."
+SAFE_EXCEPTION_TYPES = (
+    AttributeError,
+    ConnectionError,
+    KeyError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
+
+def _failed_graph_node(error: Exception) -> str:
+    for note in getattr(error, "__notes__", ()):
+        prefix = "LangGraph node: "
+        if not isinstance(note, str) or not note.startswith(prefix):
+            continue
+        node_name = note[len(prefix):]
+        if node_name in {"planner", "architect", "coder"}:
+            return node_name
+    return "unknown"
+
+
+def _safe_exception_type(error: Exception) -> str:
+    """Return only a known exception class name suitable for diagnostics."""
+    return (
+        type(error).__name__
+        if type(error) in SAFE_EXCEPTION_TYPES
+        else "OtherError"
+    )
 
 app = FastAPI(title="Thought2Code Local API", version="0.1.0")
 app.add_middleware(
@@ -289,7 +319,14 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         return response
     except HTTPException:
         raise
-    except Exception:
+    except Exception as error:
+        # Log only allowlisted metadata; exception messages and state can contain secrets.
+        logger.error(
+            "Generation failed job_id=%s node=%s exception_type=%s",
+            job_id,
+            _failed_graph_node(error),
+            _safe_exception_type(error),
+        )
         raise HTTPException(
             status_code=500,
             detail="Generation failed. Check the backend configuration and try again.",

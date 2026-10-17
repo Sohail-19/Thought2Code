@@ -89,6 +89,107 @@ def test_file_tools_are_isolated_by_project_root(tmp_path):
     assert not (second_root / "only-first.txt").exists()
 
 
+def test_generation_failure_logs_only_allowlisted_metadata_and_returns_safe_error(
+    monkeypatch, tmp_path, caplog
+):
+    prompt = "Build this sensitive project request"
+    sensitive_details = "Provider failure with org_private token=unusual-secret-value"
+    monkeypatch.setattr(api_main, "PROJECTS_ROOT", tmp_path / "jobs")
+
+    def failing_invoke(state, config):
+        raise RuntimeError(f"{sensitive_details}; prompt={prompt}")
+
+    monkeypatch.setattr(api_main.agent, "invoke", failing_invoke)
+    caplog.set_level(logging.ERROR, logger="api.main")
+
+    response = client.post("/generate", json={"project_description": prompt})
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Generation failed. Check the backend configuration and try again."
+    }
+    assert "exception_type=RuntimeError" in caplog.text
+    assert "job_id=" in caplog.text
+    assert prompt not in caplog.text
+    assert sensitive_details not in caplog.text
+    assert "Provider failure" not in caplog.text
+    assert "traceback" not in caplog.text.lower()
+
+
+def test_generation_failure_log_includes_graph_node_without_prompt(
+    monkeypatch, tmp_path, caplog
+):
+    prompt = "Build a private application idea with confidential details"
+    secret_message = f"Coder execution failed for {prompt}; token=private-provider-detail"
+    monkeypatch.setattr(api_main, "PROJECTS_ROOT", tmp_path / "jobs")
+
+    def failing_invoke(state, config):
+        error = RuntimeError(secret_message)
+        error.add_note("LangGraph node: coder")
+        raise error
+
+    monkeypatch.setattr(api_main.agent, "invoke", failing_invoke)
+    caplog.set_level(logging.ERROR, logger="api.main")
+
+    response = client.post("/generate", json={"project_description": prompt})
+
+    assert response.status_code == 500
+    assert "node=coder exception_type=RuntimeError" in caplog.text
+    assert prompt not in caplog.text
+    assert secret_message not in caplog.text
+    assert "private-provider-detail" not in caplog.text
+
+
+def test_generation_logging_rejects_unrecognized_exception_names_and_nodes(
+    monkeypatch, tmp_path, caplog
+):
+    sensitive_class_name = "RuntimeError;token=class-name-secret"
+    sensitive_message = "provider response with org-secret and prompt-secret"
+    unusual_exception = type(sensitive_class_name, (Exception,), {})
+    monkeypatch.setattr(api_main, "PROJECTS_ROOT", tmp_path / "jobs")
+
+    def failing_invoke(state, config):
+        error = unusual_exception(sensitive_message)
+        error.add_note("LangGraph node: coder;token=note-secret")
+        raise error
+
+    monkeypatch.setattr(api_main.agent, "invoke", failing_invoke)
+    caplog.set_level(logging.ERROR, logger="api.main")
+
+    response = client.post(
+        "/generate", json={"project_description": "Build a secure local application"}
+    )
+
+    assert response.status_code == 500
+    assert "node=unknown exception_type=OtherError" in caplog.text
+    assert sensitive_class_name not in caplog.text
+    assert sensitive_message not in caplog.text
+    assert "org-secret" not in caplog.text
+    assert "note-secret" not in caplog.text
+
+
+def test_missing_graph_plan_is_reported_as_failure_with_safe_state_diagnostics(
+    monkeypatch, tmp_path, caplog
+):
+    prompt = "Build a project with enough detail"
+    monkeypatch.setattr(api_main, "PROJECTS_ROOT", tmp_path / "jobs")
+    monkeypatch.setattr(
+        api_main.agent,
+        "invoke",
+        lambda state, config: {"coder_state": None, "status": "DONE"},
+    )
+    caplog.set_level(logging.ERROR, logger="api.main")
+
+    response = client.post("/generate", json={"project_description": prompt})
+
+    assert response.status_code == 500
+    assert response.json()["detail"].startswith("Generation failed.")
+    assert "exception_type=RuntimeError" in caplog.text
+    assert "result_keys" not in caplog.text
+    assert "coder_state" not in caplog.text
+    assert prompt not in caplog.text
+
+
 def test_completed_job_file_reading_is_isolated(monkeypatch, tmp_path):
     first_id, _ = make_completed_job(monkeypatch, tmp_path, {"index.html": "<h1>first job</h1>"})
     jobs_root = api_main.PROJECTS_ROOT
