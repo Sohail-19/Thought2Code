@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from groq import RateLimitError
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from agent.graph import agent
@@ -42,6 +43,8 @@ TEXT_FILE_LANGUAGES = {
     ".yaml": "yaml",
     ".yml": "yaml",
 }
+
+RATE_LIMIT_DETAIL = "The AI provider's usage limit has been reached. Please wait and try again later."
 
 
 app = FastAPI(title="Thought2Code Local API", version="0.1.0")
@@ -243,11 +246,14 @@ def generate(request: GenerateRequest) -> GenerateResponse:
 
     try:
         output_dir.mkdir(parents=True, exist_ok=False)
-        with use_project_root(output_dir):
-            result = agent.invoke(
-                {"user_prompt": request.project_description},
-                {"recursion_limit": 100},
-            )
+        try:
+            with use_project_root(output_dir):
+                result = agent.invoke(
+                    {"user_prompt": request.project_description},
+                    {"recursion_limit": 100},
+                )
+        except RateLimitError:
+            raise HTTPException(status_code=429, detail=RATE_LIMIT_DETAIL) from None
 
         if not isinstance(result, Mapping):
             raise RuntimeError("Graph returned an unexpected state type")

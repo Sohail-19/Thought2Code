@@ -1,7 +1,10 @@
+import logging
 from uuid import uuid4
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from groq import RateLimitError
+from httpx import Request, Response
 from pydantic import BaseModel
 
 import api.main as api_main
@@ -191,3 +194,35 @@ def test_file_endpoint_rejects_non_utf8_text(monkeypatch, tmp_path):
 
     assert response.status_code == 400
     assert str(tmp_path) not in response.text
+
+
+def test_groq_rate_limit_returns_safe_429_without_provider_details(
+    monkeypatch, tmp_path, caplog
+):
+    monkeypatch.setattr(api_main, "PROJECTS_ROOT", tmp_path / "jobs")
+    caplog.set_level(logging.ERROR, logger="api.main")
+    provider_details = "org=org_private key=gsk_private_key raw provider traceback"
+    request = Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    provider_response = Response(status_code=429, request=request)
+
+    def rate_limited_invoke(state, config):
+        raise RateLimitError(
+            provider_details,
+            response=provider_response,
+            body={"error": {"message": provider_details}},
+        )
+
+    monkeypatch.setattr(api_main.agent, "invoke", rate_limited_invoke)
+
+    response = client.post(
+        "/generate",
+        json={"project_description": "Build a personal to-do application"},
+    )
+
+    assert response.status_code == 429
+    assert response.json() == {"detail": api_main.RATE_LIMIT_DETAIL}
+    assert provider_details not in response.text
+    assert "org_private" not in response.text
+    assert "gsk_private_key" not in response.text
+    assert "traceback" not in response.text.lower()
+    assert provider_details not in caplog.text

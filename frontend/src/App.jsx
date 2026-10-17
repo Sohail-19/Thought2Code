@@ -1,6 +1,7 @@
 import { useState } from "react";
 import ProjectFiles from "./ProjectFiles.jsx";
 import { API_BASE_URL } from "./api.js";
+import { parseGenerateResponse } from "./generationResponse.js";
 
 const EXAMPLES = [
   {
@@ -202,19 +203,7 @@ function App() {
         body: JSON.stringify({ project_description: prompt.trim() }),
       });
 
-      let body;
-      try {
-        body = await response.json();
-      } catch {
-        throw new Error("The API returned an unreadable response. Please try again.");
-      }
-      if (!response.ok) {
-        throw new Error(
-          typeof body?.detail === "string"
-            ? body.detail
-            : "Generation failed. Check the backend configuration and try again.",
-        );
-      }
+      const body = await parseGenerateResponse(response);
       if (!isGenerateResponse(body)) {
         throw new Error("The API response did not match the expected project result.");
       }
